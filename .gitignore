@@ -1,0 +1,38 @@
+# Virtual Environments
+venv/
+.venv/
+env/
+ENV/
+env.bak/
+venv.bak/
+
+# Byte-compiled / optimized files (Python Cache)
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Pytest & Test Coverage
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+nosetests.xml
+coverage.xml
+*.cover
+
+# Environment Variables & Secrets
+.env
+.env.*
+!.env.example
+*.local
+
+# IDE & Editor Specific
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Operating System Files
+.DS_Store
+Thumbs.db
