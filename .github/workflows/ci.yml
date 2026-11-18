@@ -1,0 +1,99 @@
+name: PulseGuard CI & DevSecOps Pipeline
+
+# -----------------------------------------------------------------------------
+# Trigger Configuration:
+# Automatically trigger the pipeline on:
+# 1. Any commit pushed directly to the 'main' branch.
+# 2. Any Pull Request targeting the 'main' branch (ensuring code is tested
+#    and scanned before it can be merged).
+# -----------------------------------------------------------------------------
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+# -----------------------------------------------------------------------------
+# Security & Permissions (Principle of Least Privilege):
+# Grant read-only access to repository contents. The workflow cannot write
+# to the repo, push tags, or alter pull requests unless explicitly permitted.
+# -----------------------------------------------------------------------------
+permissions:
+  contents: read
+
+jobs:
+  build-test-scan:
+    name: Lint, Test, Build & Security Scan
+    runs-on: ubuntu-latest
+
+    steps:
+      # -----------------------------------------------------------------------
+      # Step 1: Checkout Repository
+      # Downloads the project source code onto the GitHub Actions runner.
+      # -----------------------------------------------------------------------
+      - name: Checkout repository source code
+        uses: actions/checkout@v7.0.1
+
+      # -----------------------------------------------------------------------
+      # Step 2: Set Up Python 3.14 Environment
+      # Configures a reproducible Python 3.14 runtime matching local development.
+      # -----------------------------------------------------------------------
+      - name: Set up Python 3.14
+        uses: actions/setup-python@v7.1.0
+        with:
+          python-version: "3.14"
+
+      # -----------------------------------------------------------------------
+      # Step 3: Install Dependencies
+      # Installs requirements-dev.txt (which includes requirements.txt + pytest,
+      # httpx, and ruff) into the virtual runner environment.
+      # -----------------------------------------------------------------------
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt
+
+      # -----------------------------------------------------------------------
+      # Step 4: Code Quality & Static Analysis (Linting)
+      # Uses Ruff to check for syntax errors, anti-patterns, and PEP 8 issues.
+      # If code fails linting, the pipeline halts immediately.
+      # -----------------------------------------------------------------------
+      - name: Lint code with Ruff
+        run: |
+          ruff check .
+
+      # -----------------------------------------------------------------------
+      # Step 5: Automated Testing (Shift-Left Testing)
+      # Executes the pytest test suite against app/main.py endpoints (/ and /health).
+      # If any test fails, the build stops before containerization begins.
+      # -----------------------------------------------------------------------
+      - name: Run automated tests with pytest
+        run: |
+          python -m pytest -v
+
+      # -----------------------------------------------------------------------
+      # Step 6: Build Docker Container Image Locally
+      # Builds the production container using our production Dockerfile.
+      # Tags the image with the unique Git commit SHA (${{ github.sha }})
+      # for strict traceability without pushing to any external registry.
+      # -----------------------------------------------------------------------
+      - name: Build Docker image
+        run: |
+          docker build -t pulseguard:${{ github.sha }} .
+
+      # -----------------------------------------------------------------------
+      # Step 7: Container Security & Vulnerability Scanning (DevSecOps)
+      # Uses Aqua Security Trivy to scan the locally built Docker image for
+      # OS-level and Python library vulnerabilities.
+      # - Filtered to HIGH and CRITICAL vulnerabilities.
+      # - exit-code: 0 runs in report-only mode to establish a baseline before
+      #   enforcing blocking gates.
+      # -----------------------------------------------------------------------
+      - name: Scan Docker image with Trivy (Report-only baseline)
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: 'pulseguard:${{ github.sha }}'
+          scan-type: 'image'
+          format: 'table'
+          severity: 'CRITICAL,HIGH'
+          exit-code: '0'
