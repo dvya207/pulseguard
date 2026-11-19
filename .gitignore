@@ -36,3 +36,7 @@ coverage.xml
 # Operating System Files
 .DS_Store
 Thumbs.db
+
+# PulseGuard runtime state
+state.json
+self_heal/metrics.json

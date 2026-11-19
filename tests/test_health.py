@@ -2,8 +2,9 @@
 PulseGuard Automated Test Suite
 -------------------------------
 DevOps Purpose:
-These tests run in the CI/CD pipeline (Milestone 3) before any Docker image is built.
-This enforces 'Shift-Left Quality': code with broken health probes never proceeds to the packaging phase.
+These tests run in the CI/CD pipeline before any Docker image is built.
+Validates service metadata, health probes, failure simulation hooks,
+and Prometheus observability metrics exposition.
 """
 
 import pytest
@@ -29,6 +30,7 @@ def test_root_endpoint():
     assert data["service"] == "PulseGuard"
     assert data["status"] == "online"
     assert "version" in data
+    assert "metrics_url" in data
 
 
 def test_health_check_healthy():
@@ -45,7 +47,6 @@ def test_health_check_failure_simulation():
     """
     Verify the chaos/failure simulation hook:
     When simulate_failure is enabled, /health MUST return HTTP 500.
-    This guarantees that our future deployment script will reliably detect failures.
     """
     # 1. Enable failure simulation via the chaos hook
     toggle_res = client.post("/api/v1/simulate-failure", json={"enabled": True})
@@ -64,3 +65,28 @@ def test_health_check_failure_simulation():
     recovered_health = client.get("/health")
     assert recovered_health.status_code == 200
     assert recovered_health.json()["status"] == "healthy"
+
+
+def test_metrics_endpoint():
+    """
+    Verify that /metrics/ endpoint:
+    - Responds with HTTP 200.
+    - Exports custom application metrics (http_requests_total, http_request_duration_seconds).
+    - Retains default Python process metrics (process_cpu_seconds_total, process_resident_memory_bytes).
+    """
+    # Trigger a request so application metrics are generated
+    client.get("/health")
+
+    # Fetch metrics
+    metrics_res = client.get("/metrics/")
+    assert metrics_res.status_code == 200
+    output = metrics_res.text
+
+    # Custom application metrics
+    assert "http_requests_total" in output
+    assert "http_request_duration_seconds" in output
+    assert 'route="/health"' in output
+
+    # Default Python process metrics
+    assert "process_cpu_seconds_total" in output
+    assert "process_resident_memory_bytes" in output

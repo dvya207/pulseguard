@@ -1,0 +1,19 @@
+groups:
+  - name: pulseguard-alerts
+    rules:
+      - alert: PulseGuardDown
+        expr: up{job="pulseguard"} == 0
+        for: 30s
+        labels:
+          severity: critical
+        annotations:
+          summary: "PulseGuard application is down"
+          description: "The PulseGuard FastAPI service is not reachable."
+      - alert: SelfHealingFailure
+        expr: self_heal_failure_total > 0
+        for: 30s
+        labels:
+          severity: critical
+        annotations:
+          summary: "PulseGuard self-healing failed"
+          description: "A self-healing recovery attempt has failed."
