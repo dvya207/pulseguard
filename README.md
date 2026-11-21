@@ -1,3 +1,5 @@
+<div align="center">
+
 # 🛡️ PulseGuard - DevOps Monitoring & Self-Healing Platform
 
 [![Python](https://img.shields.io/badge/Python-3.14-blue.svg)](https://www.python.org/)
@@ -6,11 +8,11 @@
 [![Docker](https://img.shields.io/badge/Docker-Compose-blue.svg)](https://docs.docker.com/compose/)
 [![License](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-> **Real-time infrastructure monitoring with automated failure detection and self-healing capabilities**
+### Real-time infrastructure monitoring with automated failure detection and self-healing capabilities
 
 PulseGuard is a production-ready DevOps platform that monitors your applications, detects failures automatically, and performs self-healing recovery or rollback operations without human intervention.
 
-![PulseGuard Dashboard](https://via.placeholder.com/1200x600/0a1628/38bdf8?text=PulseGuard+Dashboard)
+</div>
 
 ---
 
