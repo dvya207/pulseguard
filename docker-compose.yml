@@ -61,6 +61,48 @@ services:
     depends_on:
       - prometheus
 
+# Node Exporter for host metrics (CPU, RAM, disk, filesystem)
+  node-exporter:
+    image: prom/node-exporter:v1.8.2
+    container_name: pulseguard-node-exporter
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:9100:9100"
+    volumes:
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /:/rootfs:ro
+    command:
+      - "--path.procfs=/host/proc"
+      - "--path.sysfs=/host/sys"
+      - "--path.rootfs=/rootfs"
+      - "--collector.disable-defaults"
+      - "--collector.cpu"
+      - "--collector.meminfo"
+      - "--collector.diskstats"
+      - "--collector.filesystem"
+      - "--collector.loadavg"
+      - "--collector.uname"
+
+  # cAdvisor for container metrics (CPU, memory, network, container status)
+  cadvisor:
+    image: gcr.io/cadvisor/cadvisor:v0.49.1
+    container_name: pulseguard-cadvisor
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8080:8080"
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /sys:/sys:ro
+      - /var/lib/docker:/var/lib/docker:ro
+    command:
+      - "--housekeeping_interval=15s"
+      - "--docker_only=true"
+      - "--disable_metrics=percpu,sched,tcp,udp,disk,diskIO,hugetlb,referenced_memory,cpu_topology,resctrl"
+      - "--event_storage_event_limit=10000"
+      - "--event_storage_age_limit=1h"
+
 volumes:
   prometheus_data:
   grafana_data:
