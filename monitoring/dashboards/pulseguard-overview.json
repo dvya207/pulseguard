@@ -106,7 +106,7 @@
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "Prometheus" },
-          "expr": "((node_memory_MemTotal_bytes - node_memory_MemFree_bytes - node_memory_Buffers_bytes - node_memory_Cached_bytes) / node_memory_MemTotal_bytes) * 100",
+          "expr": "((node_memory_MemTotal_bytes - node_memory_MemAvailable_bytes) / node_memory_MemTotal_bytes) * 100",
           "legendFormat": "Memory Usage",
           "refId": "A"
         }
@@ -242,7 +242,7 @@
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "Prometheus" },
-          "expr": "((node_memory_MemTotal_bytes - node_memory_MemFree_bytes - node_memory_Buffers_bytes - node_memory_Cached_bytes) / node_memory_MemTotal_bytes) * 100",
+          "expr": "((node_memory_MemTotal_bytes - node_memory_MemAvailable_bytes) / node_memory_MemTotal_bytes) * 100",
           "legendFormat": "Memory Usage",
           "refId": "A"
         }
@@ -289,8 +289,8 @@
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "Prometheus" },
-          "expr": "sum(rate(container_cpu_usage_seconds_total{image!=\"\"}[5m])) by (container_label_com_docker_compose_project)",
-          "legendFormat": "{{container_label_com_docker_compose_project}}",
+          "expr": "sum(rate(container_cpu_usage_seconds_total{id=~\"/docker/.*\"}[5m])) by (name)",
+          "legendFormat": "{{name}}",
           "refId": "A"
         }
       ],
@@ -329,8 +329,8 @@
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "Prometheus" },
-          "expr": "container_memory_usage_bytes{image!=\"\"}",
-          "legendFormat": "{{container_label_com_docker_compose_project}}",
+          "expr": "container_memory_usage_bytes{id=~\"/docker/.*\"}",
+          "legendFormat": "{{name}}",
           "refId": "A"
         }
       ],

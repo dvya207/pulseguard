@@ -1,5 +1,7 @@
 # PulseGuard Infrastructure Monitoring - Runtime Verification Report
 
+> **Historical report:** The service status and metric samples below describe an earlier runtime and are not evidence of the current checkout's status. Re-run the listed checks before relying on them. Current alert routing, manual recovery limitations, and WSL2 cAdvisor caveats are described in the README.
+
 **Date**: November 21, 2026  
 **Verification Type**: Complete Runtime Testing  
 **Environment**: Windows + WSL2 Ubuntu

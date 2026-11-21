@@ -7,7 +7,7 @@
 - Has a `/health` endpoint that can fail
 - Monitors its own CPU, RAM, disk usage
 - Can simulate failures on command
-- Automatically recovers when it detects failures
+- Prometheus detects configured scrape and application-health failures; recovery scripts require manual operator execution
 
 ---
 
@@ -239,7 +239,7 @@ Go to: **http://localhost:3000**
 
 **Credentials**: Check the `.env` file or try:
 - Username: `admin`
-- Password: `admin` (or what's in your `.env`)
+- Password: Use GRAFANA_ADMIN_PASSWORD from your local .env file.
 
 ### Step 2: Open PulseGuard Dashboard
 1. Click on the menu (☰) → "Dashboards"

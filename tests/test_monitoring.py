@@ -7,9 +7,10 @@ CPU, memory, disk, and container resource usage.
 """
 
 import pytest
+from urllib.parse import parse_qs, urlparse
 from unittest.mock import patch, MagicMock
 from fastapi.testclient import TestClient
-from app.main import app
+from app.main import APP_VERSION, app
 
 client = TestClient(app)
 
@@ -47,7 +48,45 @@ def test_monitoring_endpoint_success(mock_prometheus_response):
         assert response.status_code == 200
         data = response.json()
         assert data["status"] in ["success", "partial"]
+        assert data["version"] == APP_VERSION
         assert "metrics" in data
+
+
+def test_disk_used_bytes_queries_used_space(mock_prometheus_response):
+    """Disk-used bytes must subtract available space from filesystem size."""
+    with patch('app.main.urlopen') as mock_urlopen:
+        mock_response = MagicMock()
+        mock_response.read.return_value = str(mock_prometheus_response(42.5)).replace("'", '"').encode()
+        mock_response.__enter__.return_value = mock_response
+        mock_response.__exit__.return_value = None
+        mock_urlopen.return_value = mock_response
+
+        response = client.get("/api/v1/monitoring")
+
+    queries = [
+        parse_qs(urlparse(call.args[0]).query)["query"][0]
+        for call in mock_urlopen.call_args_list
+    ]
+    assert 'node_filesystem_size_bytes{mountpoint="/"} - node_filesystem_avail_bytes{mountpoint="/"}' in queries
+    assert response.json()["metrics"]["disk_used_bytes"] == 42.5
+
+
+def test_monitoring_endpoint_handles_empty_prometheus_results():
+    """Missing series should produce unavailable values, not fail the whole API."""
+    with patch('app.main.urlopen') as mock_urlopen:
+        mock_response = MagicMock()
+        mock_response.read.return_value = b'{"status":"success","data":{"result":[]}}'
+        mock_response.__enter__.return_value = mock_response
+        mock_response.__exit__.return_value = None
+        mock_urlopen.return_value = mock_response
+
+        response = client.get("/api/v1/monitoring")
+
+    assert response.status_code == 200
+    metrics = response.json()["metrics"]
+    assert metrics["cpu_usage_percent"] is None
+    assert metrics["disk_used_bytes"] is None
+    assert metrics["container_cpu_usage"] == []
 
 
 def test_monitoring_endpoint_structure():

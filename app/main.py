@@ -15,7 +15,7 @@ from urllib.request import urlopen
 from fastapi import FastAPI, Request, Response, status, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from prometheus_client import Counter, Histogram, make_asgi_app
+from prometheus_client import Counter, Gauge, Histogram, make_asgi_app
 from starlette.routing import Match
 
 from . import __version__
@@ -66,6 +66,11 @@ HTTP_REQUEST_DURATION_SECONDS = Histogram(
     "Histogram of HTTP request durations in seconds",
     ["method", "route", "status"],
     buckets=(0.005, 0.01, 0.025, 0.05, 0.075, 0.1, 0.25, 0.5, 0.75, 1.0, 2.5, 5.0),
+)
+
+APPLICATION_HEALTH = Gauge(
+    "pulseguard_health",
+    "Whether the PulseGuard health check is passing",
 )
 
 # Prometheus metrics endpoint
@@ -135,6 +140,7 @@ runtime_state = {
         "SIMULATE_FAILURE", "false"
     ).lower() in ("true", "1", "yes")
 }
+APPLICATION_HEALTH.set(0 if runtime_state["simulate_failure"] else 1)
 
 
 class FailureSimulationRequest(BaseModel):
@@ -165,6 +171,7 @@ def health_check(response: Response):
     Returns HTTP 200 when healthy and HTTP 500 during simulated failure.
     """
     if runtime_state["simulate_failure"]:
+        APPLICATION_HEALTH.set(0)
         response.status_code = status.HTTP_500_INTERNAL_SERVER_ERROR
 
         return {
@@ -174,6 +181,7 @@ def health_check(response: Response):
             "error": "Simulated deployment failure triggered for self-healing verification.",
         }
 
+    APPLICATION_HEALTH.set(1)
     response.status_code = status.HTTP_200_OK
 
     return {
@@ -190,6 +198,7 @@ def set_failure_simulation(payload: FailureSimulationRequest):
     Used to verify automatic detection and rollback.
     """
     runtime_state["simulate_failure"] = payload.enabled
+    APPLICATION_HEALTH.set(0 if payload.enabled else 1)
 
     return {
         "simulate_failure": runtime_state["simulate_failure"],
@@ -215,7 +224,7 @@ def get_monitoring_metrics():
     # Prometheus queries for infrastructure monitoring
     queries = {
         # Self-healing metrics (existing)
-        "application_up": 'up{job="pulseguard"}',
+        "application_up": "pulseguard_health",
         "failures_detected": "self_heal_failures_detected_total",
         "recovery_attempts": "self_heal_recovery_attempts_total",
         "successful_recoveries": "self_heal_success_total",
@@ -227,12 +236,12 @@ def get_monitoring_metrics():
         "load_average_1m": 'node_load1',
         
         # Memory metrics
-        "memory_used_bytes": 'node_memory_MemTotal_bytes - node_memory_MemFree_bytes - node_memory_Buffers_bytes - node_memory_Cached_bytes',
+        "memory_used_bytes": 'node_memory_MemTotal_bytes - node_memory_MemAvailable_bytes',
         "memory_total_bytes": 'node_memory_MemTotal_bytes',
-        "memory_used_percent": '((node_memory_MemTotal_bytes - node_memory_MemFree_bytes - node_memory_Buffers_bytes - node_memory_Cached_bytes) / node_memory_MemTotal_bytes) * 100',
+        "memory_used_percent": '((node_memory_MemTotal_bytes - node_memory_MemAvailable_bytes) / node_memory_MemTotal_bytes) * 100',
         
         # Disk metrics
-        "disk_used_bytes": 'node_filesystem_avail_bytes{mountpoint="/"}',
+        "disk_used_bytes": 'node_filesystem_size_bytes{mountpoint="/"} - node_filesystem_avail_bytes{mountpoint="/"}',
         "disk_total_bytes": 'node_filesystem_size_bytes{mountpoint="/"}',
         "disk_used_percent": '((node_filesystem_size_bytes{mountpoint="/"} - node_filesystem_avail_bytes{mountpoint="/"}) / node_filesystem_size_bytes{mountpoint="/"}) * 100',
         "disk_read_bytes": 'rate(node_disk_read_bytes_total[5m])',
@@ -270,20 +279,26 @@ def get_monitoring_metrics():
                         metrics[name] = float(values[0]["value"][1])
                     except (IndexError, ValueError, TypeError):
                         metrics[name] = None
-                elif "container" in name:
+                elif name.startswith("container_"):
                     # Container metrics are lists
-                    metrics[name] = [
-                        {"metric": item["metric"].get("name", item["metric"].get("id", "unknown")), "value": float(item["value"][1])}
-                        for item in values
-                        if "value" in item
-                    ]
+                    container_values = []
+                    for item in values:
+                        try:
+                            container_values.append({
+                                "metric": item.get("metric", {}).get("name")
+                                or item.get("metric", {}).get("id", "unknown"),
+                                "value": float(item["value"][1]),
+                            })
+                        except (KeyError, IndexError, TypeError, ValueError):
+                            continue
+                    metrics[name] = container_values
                 else:
                     try:
                         metrics[name] = float(values[0]["value"][1])
                     except (IndexError, ValueError, TypeError):
                         metrics[name] = None
             else:
-                if "container" in name:
+                if name.startswith("container_"):
                     metrics[name] = []
                 else:
                     metrics[name] = None
@@ -296,6 +311,7 @@ def get_monitoring_metrics():
 
     return {
         "status": "success" if not errors else "partial",
+        "version": APP_VERSION,
         "metrics": metrics,
         "errors": errors if errors else None
     }

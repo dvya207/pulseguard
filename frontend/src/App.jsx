@@ -13,12 +13,6 @@ import {
 
 import "./App.css";
 
-const deployments = [
-  { version: "v1.4.0", description: "Production deployment", time: "Latest", status: "Successful" },
-  { version: "v1.2.0", description: "Automatic rollback", time: "Previous", status: "Rolled back" },
-  { version: "v1.2.0", description: "Previous release", time: "Earlier", status: "Successful" },
-];
-
 function MetricCard({ title, value, detail, icon: Icon, color, loading = false, error = false }) {
   let displayValue = value;
   let displayDetail = detail;
@@ -55,11 +49,12 @@ function ResourceBar({ icon: Icon, label, used, total, unit, percent, color = "b
     displayPercent = 0;
     displayUsed = "—";
     displayTotal = "—";
-  } else if (error || used === null || total === null || percent === null) {
+  } else if (error || used === null || total === null || typeof percent !== "number") {
     displayPercent = 0;
     displayUsed = "N/A";
     displayTotal = "N/A";
   }
+  displayPercent = Math.min(Math.max(displayPercent || 0, 0), 100);
 
   return (
     <div className={`resource-item ${error ? 'resource-error' : ''}`}>
@@ -69,26 +64,40 @@ function ResourceBar({ icon: Icon, label, used, total, unit, percent, color = "b
   );
 }
 
-function ContainerMetrics({ containers, loading, error }) {
+function ContainerMetrics({ cpuMetrics, memoryMetrics, loading, error }) {
   if (loading) {
     return <div className="container-loading"><Loader2 size={18} className="spinning" /> Loading container metrics...</div>;
   }
-  
-  if (error || !containers || containers.length === 0) {
-    return <div className="container-error"><AlertTriangle size={17} /> Unable to load container metrics</div>;
+
+  if (error) {
+    return <div className="container-error"><AlertTriangle size={17} /> Container metrics unavailable while the API is unreachable</div>;
+  }
+
+  const containers = new Map();
+  for (const item of cpuMetrics || []) {
+    containers.set(item.metric, { metric: item.metric, cpu: item.value });
+  }
+  for (const item of memoryMetrics || []) {
+    const container = containers.get(item.metric) || { metric: item.metric };
+    container.memory = item.value;
+    containers.set(item.metric, container);
+  }
+
+  if (containers.size === 0) {
+    return <div className="container-error"><AlertTriangle size={17} /> No container metrics returned. cAdvisor may not expose containers in WSL2.</div>;
   }
 
   return (
     <div className="container-list">
-      {containers.slice(0, 5).map((container, idx) => (
-        <div key={idx} className="container-item">
+      {[...containers.values()].slice(0, 5).map((container) => (
+        <div key={container.metric} className="container-item">
           <div className="container-icon"><Server size={16} /></div>
           <div className="container-info">
             <strong>{container.metric}</strong>
-            <span>CPU: {(container.cpu * 100).toFixed(2)}%</span>
+            <span>CPU: {container.cpu !== undefined ? `${(container.cpu * 100).toFixed(2)}%` : "N/A"}</span>
           </div>
           <div className="container-memory">
-            <span>{(container.memory / 1024 / 1024 / 1024).toFixed(2)} GB</span>
+            <span>{container.memory !== undefined ? `${(container.memory / 1024 / 1024 / 1024).toFixed(2)} GB` : "N/A"}</span>
           </div>
         </div>
       ))}
@@ -99,9 +108,12 @@ function ContainerMetrics({ containers, loading, error }) {
 export default function App() {
   const [metrics, setMetrics] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState(false);
   const [lastUpdated, setLastUpdated] = useState(null);
   const [chartData, setChartData] = useState([]);
+  const [version, setVersion] = useState(null);
+  const [metricsStatus, setMetricsStatus] = useState(null);
 
   const fetchMetrics = useCallback(async () => {
     try {
@@ -110,6 +122,8 @@ export default function App() {
       
       const data = await response.json();
       setMetrics(data.metrics);
+      setVersion(data.version);
+      setMetricsStatus(data.status);
       setError(false);
       setLastUpdated(new Date());
 
@@ -120,8 +134,8 @@ export default function App() {
       setChartData(prev => {
         const newData = [...prev, { 
           time: timeStr, 
-          cpu: data.metrics.cpu_usage_percent || 0, 
-          memory: data.metrics.memory_used_percent || 0 
+          cpu: data.metrics.cpu_usage_percent ?? null,
+          memory: data.metrics.memory_used_percent ?? null
         }];
         // Keep last 20 data points
         return newData.slice(-20);
@@ -134,10 +148,22 @@ export default function App() {
     }
   }, []);
 
+  const refreshMetrics = useCallback(async () => {
+    setRefreshing(true);
+    try {
+      await fetchMetrics();
+    } finally {
+      setRefreshing(false);
+    }
+  }, [fetchMetrics]);
+
   useEffect(() => {
-    fetchMetrics();
+    const initialFetch = setTimeout(fetchMetrics, 0);
     const interval = setInterval(fetchMetrics, 10000);
-    return () => clearInterval(interval);
+    return () => {
+      clearTimeout(initialFetch);
+      clearInterval(interval);
+    };
   }, [fetchMetrics]);
 
   const cpuPercent = metrics?.cpu_usage_percent;
@@ -147,8 +173,9 @@ export default function App() {
   const diskUsed = metrics?.disk_used_bytes;
   const diskTotal = metrics?.disk_total_bytes;
   const diskPercent = metrics?.disk_used_percent;
-  const containerMetrics = metrics?.container_cpu_usage || [];
-  const appHealth = metrics?.application_up === 1;
+  const containerCpuMetrics = metrics?.container_cpu_usage || [];
+  const containerMemoryMetrics = metrics?.container_memory_usage || [];
+  const appHealth = metrics?.application_up;
   const recoveryAttempts = metrics?.recovery_attempts;
   const successfulRecoveries = metrics?.successful_recoveries;
   const failedRecoveries = metrics?.failed_recoveries;
@@ -178,7 +205,7 @@ export default function App() {
           <a className="nav-item active" href="#"><LayoutDashboard size={18} /> Overview</a>
           <a className="nav-item" href="http://localhost:9090" target="_blank" title="Open Prometheus"><Activity size={18} /> Monitoring</a>
           <a className="nav-item" href="http://localhost:8000/docs" target="_blank" title="Open API Docs"><GitBranch size={18} /> API Docs</a>
-          <a className="nav-item" href="#self-healing" onClick={(e) => { e.preventDefault(); alert('Self-Healing Stats:\n\n✅ Recovery Attempts: 10\n✅ Successful: 10\n⚠️ Failed: 0\n🔄 Rollbacks: 1\n\nCheck metrics.json for details'); }}><HeartPulse size={18} /> Self-Healing</a>
+          <a className="nav-item" href="#self-healing"><HeartPulse size={18} /> Self-Healing</a>
           <a className="nav-item" href="http://localhost:9093" target="_blank" title="Open Alertmanager"><Bell size={18} /> Alerts</a>
         </nav>
 
@@ -199,11 +226,11 @@ export default function App() {
             <p className="subtitle">Monitor your infrastructure and deployment health.</p>
           </div>
           <div className="top-actions">
-            <span className={`live-status ${error ? 'status-error' : ''}`}>
-              <span /> {error ? "CONNECTION ERROR" : "SYSTEM OPERATIONAL"}
+            <span className={`live-status ${error || appHealth === 0 ? 'status-error' : ''}`}>
+              <span /> {error ? "CONNECTION ERROR" : appHealth === 1 ? "APPLICATION HEALTHY" : appHealth === 0 ? "APPLICATION UNHEALTHY" : "METRICS UNAVAILABLE"}
             </span>
-            <button className="refresh-btn" onClick={fetchMetrics}>
-              <RefreshCw size={16} /> Refresh
+            <button className="refresh-btn" onClick={refreshMetrics} disabled={refreshing}>
+              <RefreshCw size={16} className={refreshing ? "spinning" : ""} /> {refreshing ? "Refreshing" : "Refresh"}
             </button>
           </div>
         </header>
@@ -211,8 +238,8 @@ export default function App() {
         <section className="welcome-banner">
           <div>
             <span className="eyebrow">PULSEGUARD MONITORING</span>
-            <h2>Your infrastructure is looking healthy.</h2>
-            <p>Monitor performance, deployments and automated recovery in one place.</p>
+            <h2>{error ? "Backend metrics are unavailable." : appHealth === 0 ? "Application health check is failing." : appHealth === 1 ? "Application health check is passing." : "Waiting for backend metrics."}</h2>
+            <p>Live infrastructure and application metrics from the PulseGuard API.</p>
           </div>
           <div className="banner-icon"><ShieldCheck size={65} /></div>
         </section>
@@ -225,14 +252,14 @@ export default function App() {
         <section className="metrics-grid">
           <MetricCard 
             title="Application Health" 
-            value={appHealth ? "Healthy" : "Down"} 
-            detail={appHealth ? "API health check passed" : "Service unavailable"} 
+            value={appHealth === 1 ? "Healthy" : appHealth === 0 ? "Unhealthy" : "—"}
+            detail={appHealth === 1 ? "Health metric reports healthy" : appHealth === 0 ? "Health metric reports failure" : "Health metric unavailable"}
             icon={HeartPulse} 
-            color={appHealth ? "green" : "red"}
+            color={appHealth === 1 ? "green" : "red"}
             loading={loading}
-            error={error && !appHealth}
+            error={error}
           />
-          <MetricCard title="Current Version" value="1.4.0" detail="Currently deployed" icon={GitBranch} color="blue" />
+          <MetricCard title="Application Version" value={version} detail="Reported by backend" icon={GitBranch} color="blue" loading={loading} error={error} />
           <MetricCard 
             title="Recovery Attempts" 
             value={recoveryAttempts !== undefined ? recoveryAttempts : "—"} 
@@ -240,6 +267,7 @@ export default function App() {
             icon={Zap} 
             color="orange"
             loading={loading}
+            error={error}
           />
           <MetricCard 
             title="Successful Recoveries" 
@@ -248,6 +276,7 @@ export default function App() {
             icon={CheckCircle2} 
             color="green"
             loading={loading}
+            error={error}
           />
         </section>
 
@@ -255,7 +284,7 @@ export default function App() {
           <div className="panel chart-panel">
             <div className="panel-heading">
               <div><h3>Infrastructure performance</h3><p>CPU and memory utilization over time</p></div>
-              {!loading && !error && <span className="live-label">LIVE DATA</span>}
+              {!loading && !error && <span className="live-label">{metricsStatus === "success" ? "LIVE DATA" : "PARTIAL DATA"}</span>}
               {loading && <span className="loading-label">LOADING...</span>}
             </div>
             <div className="chart">
@@ -291,7 +320,7 @@ export default function App() {
             <ResourceBar 
               icon={Cpu} 
               label="CPU Usage" 
-              used={cpuPercent ? `${cpuPercent.toFixed(1)}%` : "—"}
+              used={typeof cpuPercent === "number" ? `${cpuPercent.toFixed(1)}%` : "N/A"}
               total="100"
               unit="%"
               percent={cpuPercent}
@@ -331,18 +360,18 @@ export default function App() {
         <section className="content-grid bottom-grid">
           <div className="panel">
             <div className="panel-heading"><div><h3>Container resources</h3><p>Docker container CPU and memory usage</p></div></div>
-            <ContainerMetrics containers={containerMetrics} loading={loading} error={error} />
+            <ContainerMetrics cpuMetrics={containerCpuMetrics} memoryMetrics={containerMemoryMetrics} loading={loading} error={error} />
           </div>
 
-          <div className="panel">
+          <div className="panel" id="self-healing">
             <div className="panel-heading"><div><h3>Recovery summary</h3><p>Self-healing activity</p></div></div>
-            <div className="recovery-stat"><CheckCircle2 size={21} /><div><strong>{successfulRecoveries !== undefined ? successfulRecoveries : "—"}</strong><span>Successful recoveries</span></div></div>
-            <div className="recovery-stat"><AlertTriangle size={21} /><div><strong>{failedRecoveries !== undefined ? failedRecoveries : "—"}</strong><span>Failed recoveries</span></div></div>
-            <div className="recovery-stat"><Clock size={21} /><div><strong>{rollbacks !== undefined ? rollbacks : "—"}</strong><span>Rollback recorded</span></div></div>
+            <div className="recovery-stat"><CheckCircle2 size={21} /><div><strong>{error ? "N/A" : (successfulRecoveries ?? "—")}</strong><span>Successful recoveries</span></div></div>
+            <div className="recovery-stat"><AlertTriangle size={21} /><div><strong>{error ? "N/A" : (failedRecoveries ?? "—")}</strong><span>Failed recoveries</span></div></div>
+            <div className="recovery-stat"><Clock size={21} /><div><strong>{error ? "N/A" : (rollbacks ?? "—")}</strong><span>Rollback recorded</span></div></div>
           </div>
         </section>
 
-        <footer>PulseGuard <span>•</span> DevOps Monitoring Platform <span>•</span> Real-time monitoring active</footer>
+        <footer>PulseGuard <span>•</span> DevOps Monitoring Platform <span>•</span> Metrics refresh every 10 seconds</footer>
       </main>
     </div>
   );

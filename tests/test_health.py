@@ -58,6 +58,8 @@ def test_health_check_failure_simulation():
     assert health_res.status_code == 500
     data = health_res.json()
     assert data["status"] == "degraded"
+    metrics_res = client.get("/metrics/")
+    assert "pulseguard_health 0.0" in metrics_res.text
 
     # 3. Disable failure simulation and verify recovery back to HTTP 200
     recover_res = client.post("/api/v1/simulate-failure", json={"enabled": False})
@@ -65,6 +67,7 @@ def test_health_check_failure_simulation():
     recovered_health = client.get("/health")
     assert recovered_health.status_code == 200
     assert recovered_health.json()["status"] == "healthy"
+    assert "pulseguard_health 1.0" in client.get("/metrics/").text
 
 
 def test_metrics_endpoint():

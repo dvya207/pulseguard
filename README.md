@@ -8,9 +8,9 @@
 [![Docker](https://img.shields.io/badge/Docker-Compose-blue.svg)](https://docs.docker.com/compose/)
 [![License](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-### Real-time infrastructure monitoring with automated failure detection and self-healing capabilities
+### Infrastructure and application monitoring with health alerts and operator-run recovery scripts
 
-PulseGuard is a production-ready DevOps platform that monitors your applications, detects failures automatically, and performs self-healing recovery or rollback operations without human intervention.
+PulseGuard is a portfolio project built around FastAPI, Prometheus, Grafana, and a React dashboard. Prometheus collects metrics and evaluates alerts; recovery and rollback scripts are available for an operator to run. Alertmanager currently routes alerts to a null receiver, and alerts do not trigger recovery automatically.
 
 </div>
 
@@ -20,15 +20,14 @@ PulseGuard is a production-ready DevOps platform that monitors your applications
 
 ### 🔍 Real-Time Monitoring
 - **CPU, Memory, Disk** metrics from Node Exporter
-- **Application health** checks every 15 seconds
+- **Application health gauge** sampled by Prometheus every 15 seconds
 - **HTTP request rates** and error tracking
 - **Live dashboard** with 10-second auto-refresh
 
 ### 🔧 Self-Healing
-- **Automatic failure detection** via Prometheus alerts
-- **Restart on failure** - attempts to recover current version
-- **Automatic rollback** - deploys previous version if recovery fails
-- **Metrics tracking** - records all recovery attempts and outcomes
+- **Prometheus alerts** - distinguish an application health failure from a failed metrics scrape
+- **Operator-run recovery scripts** - provide restart and rollback paths when deployment state and images are prepared
+- **Metrics tracking** - exports recovery counters maintained by the scripts
 
 ### 📊 Observability Stack
 - **Prometheus** - Time-series metrics database
@@ -49,7 +48,7 @@ PulseGuard is a production-ready DevOps platform that monitors your applications
 ### Prerequisites
 - Docker & Docker Compose
 - Python 3.10+
-- Node.js 18+ (for frontend development)
+- Node.js 20.19+ or 22.12+ (for the frontend toolchain)
 
 ### 1. Clone the Repository
 ```bash
@@ -59,8 +58,12 @@ cd pulseguard
 
 ### 2. Start the Infrastructure
 ```bash
+cp .env.example .env
+# Set GRAFANA_ADMIN_USER and GRAFANA_ADMIN_PASSWORD in .env (or export them in the shell).
 docker compose up -d
 ```
+
+Grafana credentials are required; Compose intentionally fails if either variable is missing or empty. Keep `.env` local and do not commit it.
 
 This starts:
 - PulseGuard FastAPI application
@@ -70,21 +73,22 @@ This starts:
 - cAdvisor (container metrics)
 - Alertmanager
 
-### 3. Access the Dashboard
+### 3. Start the Frontend in WSL2
 
-**Main Dashboard**: http://localhost:5173  
-**Prometheus**: http://localhost:9090  
-**Grafana**: http://localhost:3000  
-**API Docs**: http://localhost:8000/docs  
-
-### 4. Start the Frontend (Development)
+From the WSL2 Ubuntu project directory:
 ```bash
 cd frontend
-npm install
-npm run dev
+npm ci
+npm run dev -- --host 0.0.0.0
 ```
 
-Dashboard opens at: http://localhost:5173
+The Vite development server proxies `/api` requests to the backend on port 8000. Open the dashboard at http://localhost:5173 from Windows or WSL2.
+
+### 4. Access the Services
+
+**Prometheus**: http://localhost:9090
+**Grafana**: http://localhost:3000
+**API Docs**: http://localhost:8000/docs
 
 ---
 
@@ -93,11 +97,11 @@ Dashboard opens at: http://localhost:5173
 ### Live Dashboard
 The dashboard displays real-time metrics:
 
-- **Application Health**: Service status (Healthy/Down)
+- **Application Health**: Current health gauge from the backend
 - **CPU Usage**: Real-time processor utilization
 - **Memory Usage**: RAM consumption (used/total)
 - **Disk Usage**: Storage utilization percentage
-- **Recovery Stats**: Attempts, successes, failures, rollbacks
+- **Recovery Stats**: Exported recovery counters (zero may mean no metrics file has been initialized)
 - **Live Charts**: CPU and memory trends over time
 
 ### Sidebar Navigation
@@ -110,23 +114,16 @@ The dashboard displays real-time metrics:
 
 ---
 
-## 🧪 Test Self-Healing
+## 🧪 Failure and Recovery Scripts
 
-### Simulate a Failure
+### Simulate an Application Health Failure
 ```bash
 curl -X POST http://localhost:8000/api/v1/simulate-failure \
   -H "Content-Type: application/json" \
   -d '{"enabled": true}'
 ```
 
-**What happens:**
-1. Health endpoint returns HTTP 500
-2. Prometheus detects the failure (within 30s)
-3. Alert fires
-4. Self-healing script activates
-5. Attempts to restart the service
-6. If restart fails → Triggers automatic rollback
-7. Dashboard updates with new recovery metrics
+The endpoint returns HTTP 500 and exports `pulseguard_health = 0`, which is evaluated by the `PulseGuardHealthCheckFailed` Prometheus alert. A separate `PulseGuardScrapeFailed` alert detects when Prometheus cannot scrape the backend. Neither alert triggers `self_heal.sh`: Alertmanager currently routes to a null receiver, and the recovery script is manual.
 
 ### Restore Normal Operation
 ```bash
@@ -135,10 +132,12 @@ curl -X POST http://localhost:8000/api/v1/simulate-failure \
   -d '{"enabled": false}'
 ```
 
-### Run Self-Healing Script Manually
+### Run the Recovery Script Manually
 ```bash
 bash self_heal.sh
 ```
+
+The script requires a valid `state.json`, the metrics file, Docker Compose, and the relevant image tags. Rollback also requires the prior image to exist locally. These prerequisites and the full recovery/rollback path have not been verified by this documentation; do not treat the scripts as an automatic recovery service.
 
 ---
 
@@ -181,17 +180,12 @@ bash self_heal.sh
 
 ## 🔧 Configuration
 
-### Environment Variables
+### Grafana Environment Variables
 
-Create a `.env` file:
+Create and edit a local `.env` file. Do not put credential values in source control:
 ```bash
-# Grafana Credentials
-GRAFANA_ADMIN_USER=admin
-GRAFANA_ADMIN_PASSWORD=your_secure_password
-
-# PulseGuard Version
-PULSEGUARD_VERSION=1.0.0
-PULSEGUARD_IMAGE=pulseguard:1.0.0
+cp .env.example .env
+# Set GRAFANA_ADMIN_USER and GRAFANA_ADMIN_PASSWORD in .env.
 ```
 
 ### Prometheus Configuration
@@ -214,6 +208,13 @@ Add custom alerts in `monitoring/alert.rules.yml`:
   annotations:
     summary: "High CPU usage detected"
 ```
+
+### Alert Behavior and WSL2
+
+- `PulseGuardScrapeFailed` fires when Prometheus cannot scrape the backend metrics endpoint (`up{job="pulseguard"} == 0`).
+- `PulseGuardHealthCheckFailed` fires when the backend's `pulseguard_health` gauge reports a failed application health check.
+- Alertmanager currently routes to its configured null receiver. Alerts are evaluated and visible in Prometheus/Alertmanager, but no notifications are delivered and alerts do not launch recovery scripts.
+- cAdvisor container metrics may be missing in WSL2 because Docker Desktop's container storage metadata is not always visible at the paths cAdvisor expects. Host-level Node Exporter metrics are separate; an empty container panel in WSL2 is a known limitation, not evidence that container metrics were verified.
 
 ---
 
@@ -243,6 +244,9 @@ Add custom alerts in `monitoring/alert.rules.yml`:
 # Memory usage percentage
 (1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)) * 100
 
+# Disk used bytes
+node_filesystem_size_bytes{mountpoint="/"} - node_filesystem_avail_bytes{mountpoint="/"}
+
 # HTTP error rate
 rate(http_requests_total{status=~"5.."}[5m])
 
@@ -269,27 +273,13 @@ pytest tests/test_health.py -v
 pytest tests/test_monitoring.py -v
 ```
 
-### Test Results
-```
-tests/test_health.py::test_root_endpoint PASSED
-tests/test_health.py::test_health_check_healthy PASSED
-tests/test_health.py::test_health_check_failure_simulation PASSED
-tests/test_health.py::test_metrics_endpoint PASSED
-tests/test_monitoring.py::test_monitoring_endpoint_success PASSED
-tests/test_monitoring.py::test_monitoring_endpoint_structure PASSED
-tests/test_monitoring.py::test_monitoring_endpoint_timeout PASSED
-tests/test_monitoring.py::test_monitoring_metrics_types PASSED
-
-======================== 8 passed ========================
-```
-
 ---
 
 ## 📚 Documentation
 
 - **[Demo Guide](DEMO_GUIDE.md)** - Interactive hands-on walkthrough
 - **[Monitoring Implementation](MONITORING_IMPLEMENTATION.md)** - Technical details
-- **[Runtime Verification](RUNTIME_VERIFICATION_REPORT.md)** - Test results
+- **[Runtime Verification](RUNTIME_VERIFICATION_REPORT.md)** - Historical runtime notes; not a current verification guarantee
 - **[Quick Start](QUICK_START.md)** - Quick reference guide
 - **[Sidebar Navigation](SIDEBAR_NAVIGATION_GUIDE.md)** - Dashboard navigation help
 
@@ -310,14 +300,11 @@ tests/test_monitoring.py::test_monitoring_metrics_types PASSED
 
 ## 🔒 Security Considerations
 
-### Production Deployment
-- ✅ Non-root containers
-- ✅ Read-only volumes where possible
-- ✅ Localhost-only bindings by default
-- ⚠️ Change default Grafana credentials
-- ⚠️ Add TLS/SSL for production
-- ⚠️ Implement authentication for APIs
-- ⚠️ Use secrets management (not .env files)
+### Local Development
+- Grafana requires `GRAFANA_ADMIN_USER` and `GRAFANA_ADMIN_PASSWORD`; there are no Compose credential defaults.
+- `.env` and `.env.*` are ignored by Git; `.env.example` contains only empty keys.
+- Compose service ports bind to localhost by default.
+- The API does not provide production-grade authentication or TLS. Do not expose it directly to an untrusted network.
 
 ### Network Security
 All services are bound to `127.0.0.1` by default. For production:
@@ -328,26 +315,9 @@ All services are bound to `127.0.0.1` by default. For production:
 
 ---
 
-## 🚀 Production Deployment
+## 🚀 Deployment Considerations
 
-### Prerequisites
-- Linux server with Docker
-- Domain name (optional, for TLS)
-- Reverse proxy (Nginx/Traefik)
-
-### Steps
-1. Clone repository on server
-2. Update `.env` with secure credentials
-3. Configure firewall rules
-4. Start services: `docker compose up -d`
-5. Set up reverse proxy with TLS
-6. Configure backup for Prometheus data
-
-### Recommended Monitoring
-- Uptime monitoring (UptimeRobot, Pingdom)
-- Log aggregation (ELK stack)
-- Backup Prometheus data regularly
-- Monitor disk usage for metrics storage
+PulseGuard is a development/portfolio stack. Production suitability, TLS, API authentication, notification delivery, and automated recovery have not been established by the current configuration.
 
 ---
 
@@ -401,11 +371,16 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ## 📊 Project Status
 
-✅ **Production Ready** - Fully functional monitoring platform  
-✅ **All Tests Passing** - 8/8 tests passing  
-✅ **Real Metrics** - Live CPU, RAM, disk monitoring  
-✅ **Self-Healing** - Automatic recovery implemented  
-✅ **Documentation** - Complete guides and API docs  
+The repository includes a React dashboard, FastAPI metrics API, Prometheus rules, Grafana provisioning, and operator-run recovery scripts. Runtime behavior depends on the local Docker/WSL2 environment. Alert delivery and automatic recovery are not wired; see the alert and recovery notes above. Do not infer production readiness from the presence of these components.
+
+### Recommended Dashboard Screenshots
+
+Capture real screens only after starting the stack:
+1. PulseGuard overview with live CPU, memory, disk, application health, and update time.
+2. Grafana overview showing host CPU, memory, and disk panels with the Prometheus datasource active.
+3. Prometheus Targets page showing current scrape health.
+4. Prometheus Alerts and Alertmanager page showing alert state and the configured null receiver.
+5. Container metrics panel in a native Linux Docker environment; note the WSL2 cAdvisor limitation when capturing from WSL2.
 
 ---
 
