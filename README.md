@@ -389,14 +389,6 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ---
 
-## 👤 Author
-
-**Divya Jain**
-- GitHub: [@dvya207](https://github.com/dvya207)
-- Project: [PulseGuard](https://github.com/dvya207/pulseguard)
-
----
-
 ## 🙏 Acknowledgments
 
 - [FastAPI](https://fastapi.tiangolo.com/) - Modern Python web framework
